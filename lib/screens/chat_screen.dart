@@ -1,4 +1,4 @@
-// ignore_for_file: prefer_expression_function_bodies
+// ignore_for_file: prefer_expression_function_bodies, cascade_invocations
 
 import 'dart:async';
 import 'dart:convert';
@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:open_file_plus/open_file_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/device.dart';
 import '../models/chat_message.dart';
@@ -74,12 +75,26 @@ class _ChatScreenState extends State<ChatScreen> {
           break;
         case NetworkService.msgTypeFileComplete:
           final transferId = event['transferId'] as String;
-          final filePath = event['filePath'] as String;
-          transferProvider.updateTransfer(
-            transferId,
-            status: TransferStatus.completed,
-            filePath: filePath, // Update the final path for the receiver
-          );
+          final transfer = transferProvider.getTransfer(transferId);
+          if (transfer == null) break;
+
+          // This event is received by both sender and receiver.
+          // We need to handle it differently for each.
+          if (transfer.direction == TransferDirection.receiving) {
+            // I am the RECEIVER. Update my status and final file path.
+            final filePath = event['filePath'] as String;
+            transferProvider.updateTransfer(
+              transferId,
+              status: TransferStatus.completed,
+              filePath: filePath,
+            );
+          } else {
+            // I am the SENDER. The receiver has confirmed completion. Just update my status.
+            transferProvider.updateTransfer(
+              transferId,
+              status: TransferStatus.completed,
+            );
+          }
           break;
         case NetworkService.msgTypeFileError:
           final transferId = event['transferId'] as String;
@@ -107,12 +122,39 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  // This method explains where to implement the folder creation logic.
   void _handleFileRequest(Map<String, dynamic> data) {
-    final transfer = FileTransfer.fromJson(data);
-    // Correct the direction for the receiver
-    transfer.direction = TransferDirection.receiving;
-    // The initial file path is just the name, it will be updated on completion
-    transfer.filePath = transfer.fileName;
+    // BUG FIX: Instead of modifying a final field, we create a new FileTransfer
+    // object with the correct deviceId from the sender.
+    final transfer = FileTransfer(
+      id: data['id'],
+      fileName: data['fileName'],
+      filePath: data['filePath'] ?? data['fileName'],
+      fileSize: data['fileSize'],
+      // Associate the transfer with the sender's device, not the receiver's.
+      deviceId: widget.device.id,
+      deviceName: widget.device.name,
+      // Set direction for the receiver.
+      direction: TransferDirection.receiving,
+      // Restore other fields from the payload.
+      status: TransferStatus.values[data['status']],
+      bytesTransferred: data['bytesTransferred'] ?? 0,
+      speed: data['speed']?.toDouble() ?? 0.0,
+      timestamp: DateTime.parse(data['timestamp']),
+      endTime: data['endTime'] != null ? DateTime.parse(data['endTime']) : null,
+      errorMessage: data['errorMessage'],
+    );
+
+    // The initial file path is just the name; it will be updated on completion.
+    // The actual file saving and path determination happens in your NetworkService.
+    // To save files into a "p2p file sher" folder, you should modify the part
+    // of your NetworkService that handles receiving file data.
+    // It should look something like this (conceptual code):
+    // 1. Get a suitable directory: `final dir = await getApplicationDocumentsDirectory();` (from path_provider)
+    // 2. Create your custom folder: `final saveDir = Directory('${dir.path}/p2p file sher'); await saveDir.create(recursive: true);`
+    // 3. Create the final file path: `final finalPath = '${saveDir.path}/${transfer.fileName}';`
+    // 4. Save the incoming file stream to `finalPath`.
+    // 5. Send this `finalPath` back in the 'msgTypeFileComplete' message.
 
     final transferProvider = context.read<TransferProvider>();
     transferProvider.addTransfer(transfer);
@@ -142,38 +184,57 @@ class _ChatScreenState extends State<ChatScreen> {
     if (transfer == null) return;
 
     if (accepted) {
-      transferProvider.updateTransfer(transferId, status: TransferStatus.inProgress);
-      
-      // Start the actual file sending process
-      final networkService = context.read<NetworkService>();
-      final file = File(transfer.filePath);
-
-      // We don't want to block the UI, so we run this in the background.
-      networkService.sendFile(widget.device, file, transfer.id, (bytesSent, totalBytes) {
-        // This is the progress callback for the sender's UI
-        if (mounted) {
-          transferProvider.updateTransfer(
-            transferId,
-            bytesTransferred: bytesSent,
-          );
-          if (bytesSent == totalBytes) {
-             transferProvider.updateTransfer(transferId, status: TransferStatus.completed);
-          }
-        }
-      }).catchError((e) {
-        if (mounted) {
-          transferProvider.updateTransfer(
-            transferId,
-            status: TransferStatus.failed,
-            errorMessage: e.toString(),
-          );
-        }
-      });
+      transferProvider.updateTransfer(transferId,
+          status: TransferStatus.inProgress);
+      _initiateFileSend(transfer);
     } else {
-      transferProvider.updateTransfer(transferId, status: TransferStatus.cancelled);
+      transferProvider.updateTransfer(transferId,
+          status: TransferStatus.cancelled);
     }
   }
 
+  void _initiateFileSend(FileTransfer transfer) {
+    final networkService = context.read<NetworkService>();
+    final file = File(transfer.filePath);
+    final transferProvider = context.read<TransferProvider>();
+
+    // We don't want to block the UI, so we run this in the background.
+    networkService
+        .sendFile(widget.device, file, transfer.id, (bytesSent, totalBytes) {
+      // This is the progress callback for the sender's UI
+      if (mounted) {
+        transferProvider.updateTransfer(
+          transfer.id,
+          bytesTransferred: bytesSent,
+        );
+        if (bytesSent == totalBytes) {
+          // SENDER-SIDE COMPLETION:
+          // Do not mark as completed here. The sender should wait for a
+          // 'msgTypeFileComplete' confirmation from the receiver.
+          // The transfer will remain 'inProgress' until then.
+        }
+      }
+    }).catchError((e) {
+      if (mounted) {
+        transferProvider.updateTransfer(
+          transfer.id,
+          status: TransferStatus.failed,
+          errorMessage: e.toString(),
+        );
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Scroll to bottom when keyboard appears
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (MediaQuery.of(context).viewInsets.bottom > 0) {
+        _scrollToBottom();
+      }
+    });
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -235,8 +296,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (item is ChatMessage) {
                       return ChatBubble(message: item);
                     } else if (item is FileTransfer) {
-                      // Use a specific widget for showing file transfers in the chat
-                      return TransferProgressCard(transfer: item);
+                      return InkWell(
+                        onTap: () => _handleTransferTap(item),
+                        child: TransferProgressCard(transfer: item),
+                      );
                     }
                     return const SizedBox.shrink();
                   },
@@ -377,6 +440,49 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _handleTransferTap(FileTransfer transfer) async {
+    if (transfer.status == TransferStatus.completed) {
+      // Open the file if transfer is complete
+      try {
+        final result = await OpenFile.open(transfer.filePath);
+        if (result.type != ResultType.done) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open file: ${result.message}')),
+          );
+        }
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening file: $e')),
+        );
+      }
+    } else if (transfer.status == TransferStatus.failed && transfer.direction == TransferDirection.sending) {
+      // Ask to retry a failed send transfer
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Retry Transfer?'),
+          content: Text('Do you want to try sending "${transfer.fileName}" again?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                final transferProvider = context.read<TransferProvider>();
+                transferProvider.updateTransfer(transfer.id, status: TransferStatus.inProgress, bytesTransferred: 0, errorMessage: null);
+                _initiateFileSend(transfer);
+              },
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
   Future<void> _sendData(Map<String, dynamic> data) async {
     // Add local device info for the receiver to identify the sender
     if (data['deviceInfo'] == null) {
@@ -389,6 +495,12 @@ class _ChatScreenState extends State<ChatScreen> {
         'platform': Platform.operatingSystem,
       };
     }
+    // NOTE: This implementation creates a new socket for every single message.
+    // This is inefficient. For a more robust and performant chat, you should
+    // consider maintaining a persistent socket connection for the duration of the
+    // chat session within your NetworkService and send all data over that one socket.
+    // The file transfer itself (using networkService.sendFile) likely already
+    // manages a connection for the duration of the transfer, which is good.
     // Create a new, temporary socket for each message
     try {
       final socket = await Socket.connect(widget.device.ipAddress, widget.device.port);
