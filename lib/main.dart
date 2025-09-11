@@ -1,15 +1,15 @@
-// ignore_for_file: prefer_expression_function_bodies, cascade_invocations, directives_ordering
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'screens/home_screen.dart';
+import 'services/network_service.dart';
 import 'services/settings_service.dart';
-import 'services/discovery_service.dart';
-import 'services/transfer_service.dart';
-import 'services/notification_service.dart';
-import 'services/messaging_service.dart';
-import 'screens/main_screen.dart';
-import 'theme/app_theme.dart';
+import 'services/file_service.dart';
+import 'services/permission_service.dart';
+import 'providers/app_provider.dart';
+import 'providers/transfer_provider.dart';
+import 'providers/chat_provider.dart';
+import 'utils/theme.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -17,59 +17,46 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  await NotificationService.initialize();
+  // Initialize notifications
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const DarwinInitializationSettings initializationSettingsIOS =
+      DarwinInitializationSettings();
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: initializationSettingsIOS,
+    macOS: initializationSettingsIOS,
+  );
   
-  runApp(const P2PFileShareApp());
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  
+  runApp(const MyApp());
 }
 
-class P2PFileShareApp extends StatelessWidget {
-  const P2PFileShareApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => SettingsService()),
-        ChangeNotifierProvider(
-          create: (context) {
-            final discoveryService = DiscoveryService();
-            final settingsService = Provider.of<SettingsService>(context, listen: false);
-            discoveryService.setSettingsService(settingsService);
-            // Start advertising and discovery when the app starts
-            settingsService.addListener(() {
-              if (settingsService.isDiscoverable) {
-                discoveryService.startAdvertising();
-                discoveryService.startDiscovery();
-              } else {
-                discoveryService.stopAdvertising();
-                discoveryService.stopDiscovery();
-              }
-            });
-            if (settingsService.isDiscoverable) {
-              discoveryService.startAdvertising();
-              discoveryService.startDiscovery();
-            }
-            return discoveryService;
-          },
-        ),
-        ChangeNotifierProvider(create: (_) => TransferService()),
-        ChangeNotifierProvider(
-          create: (_) {
-            final messagingService = MessagingService();
-            messagingService.startMessageServer();
-            return messagingService;
-          },
-        ),
+        Provider(create: (_) => SettingsService()),
+        ChangeNotifierProvider(create: (ctx) => AppProvider(ctx.read<SettingsService>())),
+        ChangeNotifierProvider(create: (_) => TransferProvider()),
+        ChangeNotifierProvider(create: (_) => ChatProvider()),
+        Provider(create: (_) => NetworkService(), dispose: (_, service) => service.dispose()),
+        Provider(create: (_) => FileService()),
+        Provider(create: (_) => PermissionService()),
       ],
-      child: Consumer<SettingsService>(
-        builder: (context, settings, child) {
+      child: Consumer<AppProvider>(
+        builder: (context, appProvider, child) {
           return MaterialApp(
             title: 'P2P File Share',
+            debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,
-            themeMode: settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-            home: const MainScreen(),
-            debugShowCheckedModeBanner: false,
+            themeMode: appProvider.themeMode,
+            home: const HomeScreen(),
           );
         },
       ),

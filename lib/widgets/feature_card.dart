@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
-class FileCategoryCard extends StatelessWidget {
+class FeatureCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
   final Color color;
   final VoidCallback onTap;
 
-  const FileCategoryCard({
+  const FeatureCard({
     super.key,
     required this.icon,
     required this.title,
@@ -23,7 +23,7 @@ class FileCategoryCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -31,19 +31,19 @@ class FileCategoryCard extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
+                  shape: BoxShape.circle,
                 ),
                 child: Icon(
                   icon,
-                  color: color,
                   size: 32,
+                  color: color,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               Text(
                 title,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -51,7 +51,7 @@ class FileCategoryCard extends StatelessWidget {
               Text(
                 subtitle,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  color: Colors.grey[600],
                 ),
                 textAlign: TextAlign.center,
               ),
