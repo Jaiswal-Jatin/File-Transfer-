@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
@@ -31,11 +32,27 @@ class FileService {
   }
 
   Future<Directory> getDownloadsDirectory() async {
+    Directory? baseDirectory;
     if (Platform.isAndroid) {
-      return Directory('/storage/emulated/0/Download');
+      // On Android, getDownloadsDirectory() is available for API 29+.
+      // It's better than a hardcoded path but might require storage permissions.
+      // For older versions, it returns null.
+      baseDirectory = await getDownloadsDirectory();
+    } else if (Platform.isIOS) {
+      // On iOS, files are typically saved in the app's documents directory.
+      baseDirectory = await getApplicationDocumentsDirectory();
     } else {
-      return await getApplicationDocumentsDirectory();
+      // For desktop platforms (Windows, Linux, macOS), getDownloadsDirectory() is preferred.
+      baseDirectory = await getDownloadsDirectory();
     }
+
+    // Fallback to the application's documents directory if the downloads directory isn't available.
+    baseDirectory ??= await getApplicationDocumentsDirectory();
+    final p2pShareDirectory = Directory('${baseDirectory.path}/P2P Share');
+    if (!await p2pShareDirectory.exists()) {
+      await p2pShareDirectory.create(recursive: true);
+    }
+    return p2pShareDirectory;
   }
 
   Future<String> getFileType(String filePath) async {
@@ -115,10 +132,12 @@ class FileService {
     int fileSize,
     String transferId,
   ) async* {
+    IOSink? sink;
+    File? file;
     try {
       final downloadsDir = await getDownloadsDirectory();
-      final file = File('${downloadsDir.path}/$fileName');
-      final sink = file.openWrite();
+      file = await _getUniqueFile(downloadsDir, fileName);
+      sink = file.openWrite();
       
       int totalReceived = 0;
       final startTime = DateTime.now();
@@ -154,6 +173,15 @@ class FileService {
       );
       
     } catch (e) {
+      // Ensure the sink is closed and delete the partial file on error.
+      await sink?.close();
+      if (file != null && await file.exists()) {
+        try {
+          await file.delete();
+        } catch (deleteError) {
+          print('Error deleting partial file: $deleteError');
+        }
+      }
       yield FileTransferProgress(
         transferId: transferId,
         bytesTransferred: 0,
@@ -161,7 +189,24 @@ class FileService {
         speed: 0,
         error: e.toString(),
       );
+    } 
+  }
+
+  Future<File> _getUniqueFile(Directory dir, String fileName) async {
+    var file = File('${dir.path}/$fileName');
+    if (!await file.exists()) {
+      return file;
     }
+
+    final name = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+    final extension = fileName.contains('.') ? fileName.substring(fileName.lastIndexOf('.')) : '';
+    var counter = 1;
+    
+    while (await file.exists()) {
+      file = File('${dir.path}/$name ($counter)$extension');
+      counter++;
+    }
+    return file;
   }
 }
 

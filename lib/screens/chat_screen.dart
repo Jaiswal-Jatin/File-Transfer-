@@ -6,7 +6,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:open_file_plus/open_file_plus.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/device.dart';
 import '../models/chat_message.dart';
@@ -444,7 +444,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (transfer.status == TransferStatus.completed) {
       // Open the file if transfer is complete
       try {
-        final result = await OpenFile.open(transfer.filePath);
+        final result = await OpenFilex.open(transfer.filePath);
         if (result.type != ResultType.done) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
