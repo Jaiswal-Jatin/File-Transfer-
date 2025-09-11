@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously, prefer_expression_function_bodies
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
@@ -45,7 +47,7 @@ class _TransferScreenState extends State<TransferScreen> {
         deviceId: widget.targetDevice.id,
         deviceName: widget.targetDevice.name,
         direction: widget.isSending ? TransferDirection.sending : TransferDirection.receiving,
-        startTime: DateTime.now(),
+        timestamp: DateTime.now(),
       );
       
       _transfers.add(transfer);

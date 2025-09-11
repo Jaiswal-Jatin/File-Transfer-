@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_expression_function_bodies
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';

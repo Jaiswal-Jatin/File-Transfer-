@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_expression_function_bodies
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/file_transfer.dart';
@@ -32,7 +34,7 @@ class TransferHistoryItem extends StatelessWidget {
             Text('${transfer.deviceName} • ${transfer.formattedSize}'),
             const SizedBox(height: 4),
             Text(
-              DateFormat('MMM dd, yyyy • HH:mm').format(transfer.startTime),
+              DateFormat('MMM dd, yyyy • HH:mm').format(transfer.timestamp),
               style: TextStyle(
                 fontSize: 12,
                 color: Colors.grey[600],

@@ -31,35 +31,20 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  Socket? _socket;
   StreamSubscription? _eventSubscription;
 
   @override
   void initState() {
     super.initState();
-    _connectToDevice();
     _listenForEvents();
   }
 
   @override
   void dispose() {
-    _socket?.close();
     _messageController.dispose();
     _scrollController.dispose();
     _eventSubscription?.cancel();
     super.dispose();
-  }
-
-  Future<void> _connectToDevice() async {
-    // This method is called when the screen initializes.
-    // It establishes the persistent socket connection for this chat session,
-    // after the user has already been granted permission via the handshake flow.
-    final networkService = context.read<NetworkService>();
-    _socket = await networkService.connectToDevice(widget.device);
-    
-    // The main listener is now _listenForEvents, which uses the service's global stream.
-    // The socket here is primarily for *sending* data.
-    setState(() {});
   }
 
   void _listenForEvents() {
@@ -221,12 +206,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     widget.device.name,
                     style: const TextStyle(fontSize: 16),
                   ),
-                  Text(
-                    _socket != null ? 'Connected' : 'Connecting...',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _socket != null ? Colors.green : Colors.orange,
-                    ),
+                  const Text(
+                    'Connected',
+                    style: TextStyle(fontSize: 12, color: Colors.green),
                   ),
                 ],
               ),
@@ -401,11 +383,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _sendData(Map<String, dynamic> data) {
-    if (_socket == null) {
-      print('Socket is not connected. Cannot send data.');
-      return;
-    }
+  Future<void> _sendData(Map<String, dynamic> data) async {
     // Add local device info for the receiver to identify the sender
     if (data['deviceInfo'] == null) {
       final networkService = context.read<NetworkService>();
@@ -417,6 +395,19 @@ class _ChatScreenState extends State<ChatScreen> {
         'platform': Platform.operatingSystem,
       };
     }
-    _socket!.write(jsonEncode(data) + '\n'); // Use newline as a delimiter
+    // Create a new, temporary socket for each message
+    try {
+      final socket = await Socket.connect(widget.device.ipAddress, widget.device.port);
+      socket.write(jsonEncode(data) + '\n'); // Use newline as a delimiter
+      await socket.flush();
+      socket.close();
+    } catch (e) {
+      print('Error sending data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send message: $e')),
+        );
+      }
+    }
   }
 }
