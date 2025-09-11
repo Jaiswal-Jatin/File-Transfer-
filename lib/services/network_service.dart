@@ -287,7 +287,7 @@ class NetworkService {
           'platform': Platform.operatingSystem,
         }
       };
-      socket.write(jsonEncode(request));
+      socket.write(jsonEncode(request) + '\n');
       await socket.flush();
       socket.close();
     } catch (e) {
@@ -304,7 +304,7 @@ class NetworkService {
         'accepted': accepted,
         'deviceInfo': { 'deviceId': _deviceId, 'deviceName': _deviceName }
       };
-      socket.write(jsonEncode(response));
+      socket.write(jsonEncode(response) + '\n');
       await socket.flush();
       socket.close();
     } catch (e) {
