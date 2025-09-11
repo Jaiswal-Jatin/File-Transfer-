@@ -163,29 +163,49 @@ class NetworkService {
 
   void _handleTcpConnection(Socket client) {
     print('New TCP connection from: ${client.remoteAddress}');
-    // Use a LineSplitter to handle messages that might be split across TCP packets.
-    // The protocol is: every message is a single line of JSON.
-    // For file transfers, the first line is a JSON header, and the rest of the stream is raw bytes.
+    
     StreamSubscription? subscription;
-    subscription = utf8.decoder.bind(client).transform(const LineSplitter()).listen(
-      (data) {
-        try {
-          final jsonData = jsonDecode(data) as Map<String, dynamic>;
-          final type = jsonData['type'];
 
-          if (type == msgTypeFileData) {
-            // This is a file transfer. The rest of the stream is bytes.
-            // We cancel this subscription to stop looking for JSON lines.
-            subscription?.cancel();
-            _handleIncomingFile(client, jsonData);
-          } else {
-            // This is a regular control message.
-            _eventController.add(jsonData);
-            // Control messages are one-off, so we can close the client after this message.
+    subscription = client.listen(
+      (data) {
+        // Once we have a subscription, we can cancel it to take over the stream.
+        subscription?.cancel();
+
+        // Manually find the first newline character.
+        int newlineIndex = -1;
+        for (int i = 0; i < data.length; i++) {
+          if (data[i] == 10) { // ASCII for '\n'
+            newlineIndex = i;
+            break;
+          }
+        }
+
+        if (newlineIndex != -1) {
+          // We found the header in the first chunk.
+          final headerData = data.sublist(0, newlineIndex);
+          final headerString = utf8.decode(headerData);
+          
+          try {
+            final jsonData = jsonDecode(headerString) as Map<String, dynamic>;
+            final type = jsonData['type'] as String?;
+
+            if (type == msgTypeFileData || type == 'file_transfer_start') {
+              // This is a file transfer. The rest of the stream is bytes.
+              final firstChunk = data.sublist(newlineIndex + 1);
+              _handleIncomingFile(client, jsonData, firstChunk);
+            } else {
+              // This is a regular control message.
+              _eventController.add(jsonData);
+              client.close();
+            }
+          } catch (e) {
+            print('Error decoding JSON from TCP stream: $e. Raw line: "$headerString"');
             client.close();
           }
-        } catch (e) {
-          print('Error decoding JSON from TCP stream: $e. Raw line: "$data"');
+        } else {
+          // The first chunk didn't contain a full header, this is unexpected for our simple protocol.
+          // This would require more robust buffering, but for now we'll assume the header fits in the first packet.
+          print('Error: Did not find header in first TCP packet.');
           client.close();
         }
       },
@@ -201,15 +221,13 @@ class NetworkService {
   }
 
   // New method to handle the file stream
-  Future<void> _handleIncomingFile(Socket client, Map<String, dynamic> header) async {
+  Future<void> _handleIncomingFile(Socket client, Map<String, dynamic> header, List<int> firstChunk) async {
     final transferId = header['transferId'] as String;
     final fileName = header['fileName'] as String;
     final fileSize = header['fileSize'] as int;
 
     print('Receiving file: $fileName ($fileSize bytes)');
 
-    // This is a simplified way to get the FileService. In a larger app,
-    // you would use a proper dependency injection pattern.
     final fileService = FileService();
     IOSink? sink;
 
@@ -221,11 +239,15 @@ class NetworkService {
       final file = File('${downloadsDir.path}/$fileName');
       sink = file.openWrite();
       
-      int totalReceived = 0;
+      // Write the first chunk that we already have
+      sink.add(firstChunk);
+      int totalReceived = firstChunk.length;
+      _eventController.add({'type': msgTypeFileProgress, 'transferId': transferId, 'bytesTransferred': totalReceived, 'totalBytes': fileSize});
       
       await client.listen(
         (data) {
-          sink?.add(data);
+          // sink can be null if an error occurs before this callback
+          sink!.add(data);
           totalReceived += data.length;
           _eventController.add({'type': msgTypeFileProgress, 'transferId': transferId, 'bytesTransferred': totalReceived, 'totalBytes': fileSize});
         },

@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
+import 'network_service.dart';
 import '../models/file_transfer.dart';
 
 class FileService {
@@ -63,10 +65,10 @@ class FileService {
         'transferId': transferId,
         'fileName': fileName,
         'fileSize': fileSize,
-        'type': 'file_transfer_start',
+        'type': NetworkService.msgTypeFileData, // Use consistent message type
       };
       
-      socket.write('${metadata.toString()}\n');
+      socket.write(jsonEncode(metadata) + '\n'); // Use JSON and a newline delimiter
       
       int totalSent = 0;
       final startTime = DateTime.now();

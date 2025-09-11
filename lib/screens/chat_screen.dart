@@ -114,34 +114,21 @@ class _ChatScreenState extends State<ChatScreen> {
     // The initial file path is just the name, it will be updated on completion
     transfer.filePath = transfer.fileName;
 
-    context.read<TransferProvider>().addTransfer(transfer);
+    final transferProvider = context.read<TransferProvider>();
+    transferProvider.addTransfer(transfer);
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Incoming File'),
-        content: Text('Accept "${transfer.fileName}" (${(transfer.fileSize / 1024 / 1024).toStringAsFixed(2)} MB) from ${widget.device.name}?'),
-        actions: [
-          TextButton(onPressed: () {
-            _sendData({
-              'type': NetworkService.msgTypeFileResponse,
-              'transferId': transfer.id,
-              'accepted': false,
-            });
-            context.read<TransferProvider>().updateTransfer(transfer.id, status: TransferStatus.cancelled);
-            Navigator.of(ctx).pop();
-          }, child: const Text('Decline')),
-          TextButton(onPressed: () {
-             _sendData({
-              'type': NetworkService.msgTypeFileResponse,
-              'transferId': transfer.id,
-              'accepted': true,
-            });
-            context.read<TransferProvider>().updateTransfer(transfer.id, status: TransferStatus.inProgress);
-            Navigator.of(ctx).pop();
-          }, child: const Text('Accept')),
-        ],
-      ),
+    // Auto-accept the file
+    _sendData({
+      'type': NetworkService.msgTypeFileResponse,
+      'transferId': transfer.id,
+      'accepted': true,
+    });
+    transferProvider.updateTransfer(transfer.id, status: TransferStatus.inProgress);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content:
+              Text('Receiving "${transfer.fileName}" from ${widget.device.name}')),
     );
   }
 
@@ -215,6 +202,13 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.link_off),
+            tooltip: 'Disconnect',
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
       ),
       body: Column(
         children: [
