@@ -32,6 +32,10 @@ dependencies:
   # UI Components
   cupertino_icons: ^1.0.6
   flutter_local_notifications: ^19.4.1
+
+  # Desktop Specific
+  desktop_drop: ^0.4.4
+  cross_file: ^0.3.4+1
   
   # Utilities
   intl: ^0.20.2
@@ -41,14 +45,27 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
-#   assets:
-#     - assets/images/
+  assets:
+    - assets/images/
+    - assets/images/AppIcon.png
+    - assets/images/androidAppIcon.png
 #     - assets/icons/
 
-# flutter_icons:
-#   android: "launcher_icon"
-#   ios: true
-#   image_path: "assets/icon/icon.png"
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # Default icon for platforms like Windows, macOS, Linux
+  image_path: "assets/images/AppIcon.png"
+  # Specific icons for mobile platforms
+  image_path_android: "assets/images/androidAppIcon.png"
+  image_path_ios: "assets/images/androidAppIcon.png"
+  windows:
+    generate: true
+  macos:
+    generate: true
+  linux:
+    generate: true

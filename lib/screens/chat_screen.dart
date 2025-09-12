@@ -1,4 +1,4 @@
-// ignore_for_file: prefer_expression_function_bodies, cascade_invocations
+// ignore_for_file: prefer_expression_function_bodies, cascade_invocations, depend_on_referenced_packages, directives_ordering
 
 import 'dart:async';
 import 'dart:convert';
@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:cross_file/cross_file.dart';
 import '../models/device.dart';
 import '../models/chat_message.dart';
 import '../models/file_transfer.dart';
@@ -34,6 +36,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   StreamSubscription? _eventSubscription;
   bool _isPopping = false;
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -323,7 +326,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
   }
-  @override
+
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -373,42 +376,84 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-        body: Column(
-          children: [
-            Expanded(
-              child: Consumer2<ChatProvider, TransferProvider>(
-                builder: (context, chatProvider, transferProvider, child) {
-                  final messages = chatProvider.getConversation(widget.device.id);
-                  final transfers = transferProvider.getTransfersForDevice(widget.device.id);
+        body: _buildChatBody(),
+    );
+  }
 
-                  // Combine and sort messages and transfers by time
-                  final List<dynamic> conversationItems = [...messages, ...transfers];
-                  conversationItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-                  
-                  if (conversationItems.isEmpty) {
-                    return _buildEmptyChatView();
+  Widget _buildChatBody() {
+    // Only enable drop target on desktop platforms
+    final isDesktop = Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+
+    final chatContent = Column(
+      children: [
+        Expanded(
+          child: Consumer2<ChatProvider, TransferProvider>(
+            builder: (context, chatProvider, transferProvider, child) {
+              final messages = chatProvider.getConversation(widget.device.id);
+              final transfers = transferProvider.getTransfersForDevice(widget.device.id);
+
+              // Combine and sort messages and transfers by time
+              final List<dynamic> conversationItems = [...messages, ...transfers];
+              conversationItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+              
+              if (conversationItems.isEmpty) {
+                return _buildEmptyChatView();
+              }
+
+              return ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(16),
+                itemCount: conversationItems.length,
+                itemBuilder: (context, index) {
+                  final item = conversationItems[index];
+                  if (item is ChatMessage) {
+                    return ChatBubble(message: item);
+                  } else if (item is FileTransfer) {
+                    return _buildTransferItem(item);
                   }
-
-                  return ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: conversationItems.length,
-                    itemBuilder: (context, index) {
-                      final item = conversationItems[index];
-                      if (item is ChatMessage) {
-                        return ChatBubble(message: item);
-                      } else if (item is FileTransfer) {
-                        return _buildTransferItem(item);
-                      }
-                      return const SizedBox.shrink();
-                    },
-                  );
+                  return const SizedBox.shrink();
                 },
-              ),
-            ),
-            _buildMessageInput(),
+              );
+            },
+          ),
+        ),
+        _buildMessageInput(),
+      ],
+    );
+
+    if (isDesktop) {
+      return DropTarget(
+        onDragDone: (details) => _handleDroppedFiles(details.files),
+        onDragEntered: (details) => setState(() => _isDragging = true),
+        onDragExited: (details) => setState(() => _isDragging = false),
+        child: Stack(
+          children: [
+            chatContent,
+            if (_isDragging) _buildDragOverlay(),
           ],
         ),
+      );
+    }
+
+    return chatContent;
+  }
+
+  Widget _buildDragOverlay() {
+    return Container(
+      color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.9),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.file_upload_rounded, size: 80, color: Theme.of(context).primaryColor),
+            const SizedBox(height: 20),
+            Text(
+              'Drop files here to send',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Theme.of(context).primaryColor, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -734,6 +779,36 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _handleDroppedFiles(List<XFile> files) async {
+    if (files.isEmpty) return;
+
+    setState(() => _isDragging = false);
+
+    final transferProvider = context.read<TransferProvider>();
+
+    for (final file in files) {
+      final fileSize = await file.length();
+      final transfer = FileTransfer(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + file.hashCode.toString(),
+        fileName: file.name,
+        filePath: file.path,
+        fileSize: fileSize,
+        deviceId: widget.device.id,
+        deviceName: widget.device.name,
+        direction: TransferDirection.sending,
+        status: TransferStatus.pending,
+        timestamp: DateTime.now(),
+      );
+
+      transferProvider.addTransfer(transfer);
+      
+      // Send file info to the other device
+      final fileInfoMessage = transfer.toJson();
+      fileInfoMessage['type'] = NetworkService.msgTypeFileInfo;
+      _sendData(fileInfoMessage);
+    }
   }
 
   Future<void> _pickFiles() async {
