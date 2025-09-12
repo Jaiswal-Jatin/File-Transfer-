@@ -1,26 +1,37 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.file_transfer">
 
-    <!-- Required for network discovery and transfer -->
+    <!-- Permissions for Network Discovery and File Transfer -->
     <uses-permission android:name="android.permission.INTERNET"/>
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
 
-    <!-- Wi-Fi Direct / Nearby (safe version) -->
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"/>
+    <!-- Required for Wi-Fi scanning on Android 12 (API 31) and above -->
+    <!-- The "neverForLocation" flag is important to assert that you don't use this for location -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+                     android:usesPermissionFlags="neverForLocation" />
 
-    <!-- File access (older versions) -->
+    <!-- Required for Wi-Fi scanning on older Android versions (below API 31) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Permissions for reading/writing files -->
+    <!-- For Android 10 (API 29) and above, scoped storage is preferred. -->
+    <!-- These are for legacy support. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- To access all files on Android 11+ -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
 
-    <!-- File access (Android 13+) -->
+    <!-- For Android 13+, specific media permissions are used for media access -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
 
-    <!-- Notifications -->
+    <!-- Permission for notifications on Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application

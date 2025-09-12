@@ -160,13 +160,14 @@ class _ChatScreenState extends State<ChatScreen> {
     transferProvider.addTransfer(transfer);
 
     // Auto-accept the file
-    _sendData({
+    final networkService = context.read<NetworkService>();
+    networkService.sendMessage(widget.device, {
       'type': NetworkService.msgTypeFileResponse,
       'transferId': transfer.id,
       'accepted': true,
     });
     transferProvider.updateTransfer(transfer.id, status: TransferStatus.inProgress);
-
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content:
@@ -412,13 +413,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     context.read<ChatProvider>().addMessage(message);
     
-    _sendData({
+    final networkService = context.read<NetworkService>();
+    networkService.sendMessage(widget.device, {
       'type': NetworkService.msgTypeChat,
       'id': message.id,
       'message': message.message,
       'deviceInfo': {
-        'deviceId': context.read<NetworkService>().deviceId,
-        'deviceName': context.read<NetworkService>().deviceName,
+        'deviceId': networkService.deviceId,
+        'deviceName': networkService.deviceName,
         'ipAddress': context.read<NetworkService>().localIpAddress,
         'port': context.read<NetworkService>().tcpServerPort,
       }
@@ -483,30 +485,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
   }
+
   Future<void> _sendData(Map<String, dynamic> data) async {
-    // Add local device info for the receiver to identify the sender
-    if (data['deviceInfo'] == null) {
-      final networkService = context.read<NetworkService>();
-      data['deviceInfo'] = {
-        'deviceId': networkService.deviceId,
-        'deviceName': networkService.deviceName,
-        'ipAddress': networkService.localIpAddress,
-        'port': networkService.tcpServerPort,
-        'platform': Platform.operatingSystem,
-      };
-    }
-    // NOTE: This implementation creates a new socket for every single message.
-    // This is inefficient. For a more robust and performant chat, you should
-    // consider maintaining a persistent socket connection for the duration of the
-    // chat session within your NetworkService and send all data over that one socket.
-    // The file transfer itself (using networkService.sendFile) likely already
-    // manages a connection for the duration of the transfer, which is good.
-    // Create a new, temporary socket for each message
+    // This method is now a wrapper around the centralized NetworkService.
+    // The NetworkService should manage a persistent socket connection.
+    final networkService = context.read<NetworkService>();
     try {
-      final socket = await Socket.connect(widget.device.ipAddress, widget.device.port);
-      socket.write(jsonEncode(data) + '\n'); // Use newline as a delimiter
-      await socket.flush();
-      socket.close();
+      await networkService.sendMessage(widget.device, data);
     } catch (e) {
       print('Error sending data: $e');
       if (mounted) {

@@ -1,16 +1,17 @@
+// ignore_for_file: prefer_expression_function_bodies
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'package:multicast_dns/multicast_dns.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import '../models/device.dart';
 import 'file_service.dart';
 
 class NetworkService {
-  // --- Constants for networking ---
-  static const int _discoveryPort = 8888; // Port for UDP broadcast
-  static const String _serviceType = '_p2pshare._tcp'; // For mDNS
+  // --- Constants for networking ---  
+  static const int _networkPort = 8080; // Port for TCP communication
+  static const int _discoveryPort = 8081; // Port for UDP discovery
   static const String msgTypeDiscovery = 'discovery';
   static const String msgTypeConnectionRequest = 'connection_request';
   static const String msgTypeConnectionResponse = 'connection_response';
@@ -26,12 +27,13 @@ class NetworkService {
   // --- Stream Controllers ---
   final StreamController<Device> _deviceController = StreamController.broadcast();
   final StreamController<Map<String, dynamic>> _eventController = StreamController.broadcast();
-  final Map<String, Device> _discoveredDevices = {};
   
-  RawDatagramSocket? _udpSocket;
+  // --- State ---
+  final Map<String, Device> _discoveredDevices = {};
   ServerSocket? _tcpServer;
-  MDnsClient? _mdnsClient;
+  RawDatagramSocket? _udpSocket;
   Timer? _broadcastTimer;
+  Timer? _cleanupTimer;
   
   String? _localIpAddress;
   String _deviceId = '';
@@ -54,63 +56,26 @@ class NetworkService {
   }
 
   Future<void> startDiscovery() async {
-    await _startUdpBroadcast();
-    // mDNS discovery is not fully implemented in this snippet,
-    // but this is where you would start it.
-    await _startMdnsDiscovery();
-    await _startTcpServer();
+    // Stop any previous instances to prevent resource leaks
+    await stopDiscovery();
+
+    _cleanupTimer = Timer.periodic(const Duration(seconds: 30), (_) => _cleanupStaleDevices());
+    await _startTcpServer(); // For actual communication (chat, files)
+    await _startUdpDiscovery(); // For discovering other devices
   }
 
   Future<void> stopDiscovery() async {
     _broadcastTimer?.cancel();
+    _cleanupTimer?.cancel();
     _udpSocket?.close();
+    _udpSocket = null;
     await _tcpServer?.close();
-    _mdnsClient?.stop();
-    _discoveredDevices.clear();
-    // Do not close controllers here if the service is meant to be long-lived.
-  }
-
-  Future<void> _startUdpBroadcast() async {
-    try {
-      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
-      _udpSocket!.broadcastEnabled = true;
-
-      // Listen for incoming broadcasts
-      _udpSocket!.listen((RawSocketEvent event) {
-        if (event == RawSocketEvent.read) {
-          final datagram = _udpSocket!.receive();
-          if (datagram != null) {
-            _handleIncomingBroadcast(datagram);
-          }
-        }
-      });
-
-      // Send periodic broadcasts
-      _broadcastTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-        _sendBroadcast();
-      });
-
-    } catch (e) {
-      print('Error starting UDP broadcast: $e');
-    }
-  }
-
-  Future<void> _startMdnsDiscovery() async {
-    try {
-      _mdnsClient = MDnsClient();
-      await _mdnsClient!.start();
-
-      // Advertise our service
-      await _mdnsClient!.start();
-      
-    } catch (e) {
-      print('Error starting mDNS discovery: $e');
-    }
+    _tcpServer = null;
   }
 
   Future<void> _startTcpServer() async {
     try {
-      _tcpServer = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+      _tcpServer = await ServerSocket.bind(InternetAddress.anyIPv4, _networkPort);
       print('TCP Server started on port: ${_tcpServer!.port}');
       
       _tcpServer!.listen((Socket client) {
@@ -121,79 +86,73 @@ class NetworkService {
     }
   }
 
-  void _sendBroadcast() {
-    if (_udpSocket == null || _localIpAddress == null) return;
+  Future<void> _startUdpDiscovery() async {
+    try {
+      // 1. Create the UDP socket to listen for broadcasts
+      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
+      _udpSocket!.broadcastEnabled = true;
+      _udpSocket!.listen(_handleUdpPacket);
+      print('UDP Discovery listener started on port $_discoveryPort');
 
-    final message = jsonEncode({
+      // 2. Start broadcasting our presence periodically
+      _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) => _broadcastPresence());
+      // Send an initial broadcast immediately
+      _broadcastPresence();
+
+    } catch (e) {
+      print('Error starting UDP discovery: $e');
+    }
+  }
+
+  void _broadcastPresence() {
+    if (_udpSocket == null) return;
+
+    final message = {
       'type': msgTypeDiscovery,
       'deviceId': _deviceId,
       'deviceName': _deviceName,
-      'ipAddress': _localIpAddress,
-      'port': _tcpServer?.port ?? 0,
+      'port': _tcpServer?.port ?? 0, // The port for TCP connection
       'platform': Platform.operatingSystem,
-      'timestamp': DateTime.now().millisecondsSinceEpoch,
-    });
-
-    final data = utf8.encode(message);
-    _udpSocket!.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
-  }
-
-  void _handleIncomingBroadcast(Datagram datagram) {
+    };
+    final data = utf8.encode(jsonEncode(message));
+    
+    // Broadcast to the local network
     try {
-      final message = utf8.decode(datagram.data);
-      final data = jsonDecode(message);
-
-      if (data['type'] == msgTypeDiscovery && data['deviceId'] != _deviceId) {
-        final device = Device(
-          id: data['deviceId'],
-          name: data['deviceName'],
-          ipAddress: data['ipAddress'],
-          port: data['port'],
-          platform: data['platform'],
-          lastSeen: DateTime.now(),
-        );
-
-        _discoveredDevices[device.id] = device;
-        _deviceController.add(device);
-      }
+      _udpSocket!.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
     } catch (e) {
-      print('Error handling broadcast: $e');
+      print('Error sending broadcast: $e');
     }
   }
 
   void _handleTcpConnection(Socket client) {
     print('New TCP connection from: ${client.remoteAddress}');
     
-    StreamSubscription? subscription;
+    // A buffer to accumulate data until a newline is found
+    List<int> buffer = [];
+    StreamSubscription? subscription; // To be able to cancel it
 
-    subscription = client.listen(
+    subscription = client.listen( // NOSONAR
       (data) {
-        // Once we have a subscription, we can cancel it to take over the stream.
-        subscription?.cancel();
-
-        // Manually find the first newline character.
-        int newlineIndex = -1;
-        for (int i = 0; i < data.length; i++) {
-          if (data[i] == 10) { // ASCII for '\n'
-            newlineIndex = i;
-            break;
-          }
-        }
+        buffer.addAll(data);
+        int newlineIndex = buffer.indexOf(10); // ASCII for '\n'
 
         if (newlineIndex != -1) {
+          // We have a complete header. Stop listening on this subscription.
+          subscription?.cancel();
+
           // We found the header in the first chunk.
-          final headerData = data.sublist(0, newlineIndex);
+          final headerData = buffer.sublist(0, newlineIndex);
+          final remainingData = buffer.sublist(newlineIndex + 1);
           final headerString = utf8.decode(headerData);
           
           try {
             final jsonData = jsonDecode(headerString) as Map<String, dynamic>;
             final type = jsonData['type'] as String?;
 
-            if (type == msgTypeFileData || type == 'file_transfer_start') {
+            if (type == msgTypeFileData) {
               // This is a file transfer. The rest of the stream is bytes.
-              final firstChunk = data.sublist(newlineIndex + 1);
-              _handleIncomingFile(client, jsonData, firstChunk);
-            } else {
+              _handleIncomingFile(client, jsonData, remainingData);
+            } else { // Chat messages, file responses etc.
               // This is a regular control message.
               _eventController.add(jsonData);
               client.close();
@@ -203,10 +162,7 @@ class NetworkService {
             client.close();
           }
         } else {
-          // The first chunk didn't contain a full header, this is unexpected for our simple protocol.
-          // This would require more robust buffering, but for now we'll assume the header fits in the first packet.
-          print('Error: Did not find header in first TCP packet.');
-          client.close();
+          // No newline yet, keep buffering and wait for the next data event.
         }
       },
       onDone: () {
@@ -218,6 +174,41 @@ class NetworkService {
       },
       cancelOnError: true,
     );
+  }
+
+  void _handleUdpPacket(RawSocketEvent event) {
+    if (event == RawSocketEvent.read) {
+      final datagram = _udpSocket?.receive();
+      if (datagram == null) return;
+
+      try {
+        final message = utf8.decode(datagram.data);
+        final data = jsonDecode(message) as Map<String, dynamic>;
+
+        if (data['type'] == msgTypeDiscovery) {
+          final deviceId = data['deviceId'] as String;
+          
+          // Ignore our own broadcast
+          if (deviceId == _deviceId) return;
+
+          final device = Device(
+            id: deviceId,
+            name: data['deviceName'] as String,
+            ipAddress: datagram.address.address, // The IP of the sender
+            port: data['port'] as int, // The TCP port from the payload
+            platform: data['platform'] as String,
+            lastSeen: DateTime.now(),
+          );
+
+          // Add or update the device in our list
+          if (!_discoveredDevices.containsKey(device.id) || _discoveredDevices[device.id] != device) {
+            _discoveredDevices[device.id] = device;
+            _deviceController.add(device);
+            print('Discovered device via UDP: ${device.name} (${device.ipAddress})');
+          }
+        }
+      } catch (e) { /* Ignore malformed packets */ }
+    }
   }
 
   // New method to handle the file stream
@@ -270,6 +261,52 @@ class NetworkService {
       await sink?.close();
       client.close();
       _eventController.add({'type': msgTypeFileError, 'transferId': transferId, 'error': e.toString()});
+    }
+  }
+
+  void _cleanupStaleDevices() {
+    final now = DateTime.now();
+    final List<String> staleDeviceIds = [];
+    _discoveredDevices.forEach((id, device) {
+      if (now.difference(device.lastSeen).inSeconds > 15) {
+        staleDeviceIds.add(id);
+      }
+    });
+
+    if (staleDeviceIds.isNotEmpty) {
+      staleDeviceIds.forEach(_discoveredDevices.remove);
+      // Notify the UI by sending a "dummy" device update. The UI rebuilds from the full list.
+      // A better approach would be a dedicated "list updated" stream.
+      _deviceController.add(Device(id: 'update', name: '', ipAddress: '', port: 0, platform: '', lastSeen: DateTime.now()));
+      print('Removed stale devices: $staleDeviceIds');
+    }
+  }
+
+  // Sends a one-shot message. Connects, sends, and closes.
+  Future<void> sendMessage(Device targetDevice, Map<String, dynamic> data) async {
+    // Add local device info for the receiver to identify the sender
+    if (data['deviceInfo'] == null) {
+      data['deviceInfo'] = {
+        'deviceId': _deviceId,
+        'deviceName': _deviceName,
+        'ipAddress': _localIpAddress,
+        'port': _tcpServer?.port ?? 0,
+        'platform': Platform.operatingSystem,
+      };
+    }
+
+    Socket? socket;
+    try {
+      // Always create a new connection. This is less efficient for chat but more
+      // robust and matches the server's one-shot message handling.
+      socket = await Socket.connect(targetDevice.ipAddress, targetDevice.port);
+      socket.write(jsonEncode(data) + '\n');
+      await socket.flush();
+    } catch (e) {
+      print('Error sending message to ${targetDevice.name}: $e');
+      rethrow; // Rethrow to let the caller handle it (e.g., show a SnackBar)
+    } finally {
+      socket?.close();
     }
   }
 
@@ -345,6 +382,7 @@ class NetworkService {
     } catch (e) {
       print('Error sending file ($transferId): $e');
       // You should also notify the UI about the error.
+      rethrow;
     } finally {
       socket?.close();
     }

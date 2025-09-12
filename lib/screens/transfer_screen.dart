@@ -60,45 +60,41 @@ class _TransferScreenState extends State<TransferScreen> {
 
     try {
       final networkService = context.read<NetworkService>();
-      final fileService = context.read<FileService>();
-      final socket = await networkService.connectToDevice(widget.targetDevice);
-
-      if (socket == null) {
-        _showError('Failed to connect to device');
-        return;
-      }
+      final transferProvider = context.read<TransferProvider>();
 
       for (final transfer in _transfers) {
         final file = File(transfer.filePath);
         
-        context.read<TransferProvider>().updateTransfer(
+        transferProvider.updateTransfer(
           transfer.id,
           status: TransferStatus.inProgress,
         );
 
-        await for (final progress in fileService.sendFile(file, socket, transfer.id)) {
-          context.read<TransferProvider>().updateTransfer(
-            transfer.id,
-            bytesTransferred: progress.bytesTransferred,
-            speed: progress.speed,
-          );
-
-          if (progress.isCompleted) {
-            context.read<TransferProvider>().updateTransfer(
-              transfer.id,
-              status: TransferStatus.completed,
-            );
-          } else if (progress.error != null) {
-            context.read<TransferProvider>().updateTransfer(
+        try {
+          // Use the network service to send each file. It handles the connection internally.
+          await networkService.sendFile(widget.targetDevice, file, transfer.id, (bytesSent, totalBytes) {
+            if (mounted) {
+              transferProvider.updateTransfer(
+                transfer.id,
+                bytesTransferred: bytesSent,
+              );
+            }
+          });
+          // This screen is simple, so we mark as complete on successful send.
+          // The main chat screen waits for receiver confirmation.
+          if (mounted) {
+            transferProvider.updateTransfer(transfer.id, status: TransferStatus.completed);
+          }
+        } catch (e) {
+          if (mounted) {
+            transferProvider.updateTransfer(
               transfer.id,
               status: TransferStatus.failed,
-              errorMessage: progress.error,
+              errorMessage: e.toString(),
             );
           }
         }
       }
-
-      socket.close();
     } catch (e) {
       _showError('Transfer failed: $e');
     } finally {

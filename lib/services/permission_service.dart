@@ -3,6 +3,13 @@ import 'dart:io';
 
 class PermissionService {
   Future<bool> requestAllPermissions() async {
+    // On desktop platforms like macOS, Windows, and Linux, many of these
+    // permissions are not managed at runtime via this plugin. Network permissions
+    // for macOS are handled via entitlements, not here.
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      return true;
+    }
+
     final permissions = <Permission>[];
 
     if (Platform.isAndroid) {
@@ -48,7 +55,9 @@ class PermissionService {
     return await Permission.notification.isGranted;
   }
 
-  Future<void> openAppSettings() async {
-    await openAppSettings();
+  // Renamed to avoid recursive call with the package's top-level function
+  Future<void> requestOpenAppSettings() async {
+    // Now this correctly calls the `openAppSettings` function from the permission_handler package
+    await openAppSettings(); 
   }
 }
