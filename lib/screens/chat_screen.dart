@@ -32,6 +32,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   StreamSubscription? _eventSubscription;
+  bool _isPopping = false;
 
   @override
   void initState() {
@@ -108,11 +109,18 @@ class _ChatScreenState extends State<ChatScreen> {
             errorMessage: error,
           );
           break;
+        case NetworkService.msgTypeDisconnect:
+          if (fromDeviceId == widget.device.id) {
+            _handleDisconnection();
+          }
+          break;
       }
     });
   }
 
   Future<void> _onAttemptPop() async {
+    if (_isPopping) return;
+
     final shouldPop = await showDialog<bool>(
       context: context,
       barrierDismissible: false, // User must choose an action
@@ -140,8 +148,41 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (shouldPop ?? false && mounted) {
-      Navigator.of(context).pop();
+      setState(() {
+        _isPopping = true;
+      });
+      // Send a disconnect message to the other device before leaving.
+      await context.read<NetworkService>().sendMessage(widget.device, {
+        'type': NetworkService.msgTypeDisconnect,
+      });
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
     }
+  }
+
+  void _handleDisconnection() {
+    if (!mounted || _isPopping) return;
+
+    // Show a dialog informing the user and then pop the screen.
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Connection Ended'),
+        content: Text('${widget.device.name} has disconnected.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop(); // Close dialog
+              setState(() => _isPopping = true);
+              if (mounted) Navigator.of(context).pop(); // Go back to home screen
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleIncomingMessage(Map<String, dynamic> data) {
@@ -274,7 +315,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: _isPopping,
       onPopInvoked: (bool didPop) {
         if (didPop) return;
         _onAttemptPop();

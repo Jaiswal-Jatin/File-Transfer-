@@ -15,6 +15,7 @@ class NetworkService {
   static const String msgTypeDiscovery = 'discovery';
   static const String msgTypeConnectionRequest = 'connection_request';
   static const String msgTypeConnectionResponse = 'connection_response';
+  static const String msgTypeDisconnect = 'disconnect';
   // --- New message types for file transfer protocol ---
   static const String msgTypeChat = 'chat_message';
   static const String msgTypeFileInfo = 'file_info';
