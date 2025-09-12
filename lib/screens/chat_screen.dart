@@ -15,7 +15,6 @@ import '../providers/chat_provider.dart';
 import '../providers/transfer_provider.dart';
 import '../services/network_service.dart';
 import '../widgets/chat_bubble.dart';
-import '../widgets/transfer_progress_card.dart';
 
 class ChatScreen extends StatefulWidget {
   final Device device;
@@ -78,22 +77,26 @@ class _ChatScreenState extends State<ChatScreen> {
           final transfer = transferProvider.getTransfer(transferId);
           if (transfer == null) break;
 
-          // This event is received by both sender and receiver.
-          // We need to handle it differently for each.
-          if (transfer.direction == TransferDirection.receiving) {
-            // I am the RECEIVER. Update my status and final file path.
+          // This event can be local (for receiver) or from network (for sender)
+          if (fromDeviceId == widget.device.id && transfer.direction == TransferDirection.sending) {
+            // I am the SENDER, and this is a confirmation from the receiver.
+            transferProvider.updateTransfer(
+              transferId,
+              status: TransferStatus.completed,
+            );
+          } else if (fromDeviceId == null && transfer.direction == TransferDirection.receiving) {
+            // I am the RECEIVER, and this is a local event from my NetworkService.
             final filePath = event['filePath'] as String;
             transferProvider.updateTransfer(
               transferId,
               status: TransferStatus.completed,
               filePath: filePath,
             );
-          } else {
-            // I am the SENDER. The receiver has confirmed completion. Just update my status.
-            transferProvider.updateTransfer(
-              transferId,
-              status: TransferStatus.completed,
-            );
+            // Send confirmation back to the sender.
+            context.read<NetworkService>().sendMessage(widget.device, {
+              'type': NetworkService.msgTypeFileComplete,
+              'transferId': transferId,
+            });
           }
           break;
         case NetworkService.msgTypeFileError:
@@ -243,7 +246,7 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Row(
           children: [
             CircleAvatar(
-              radius: 16,
+              radius: 20,
               child: Text(widget.device.name[0].toUpperCase()),
             ),
             const SizedBox(width: 12),
@@ -253,11 +256,25 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Text(
                     widget.device.name,
-                    style: const TextStyle(fontSize: 16),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
-                  const Text(
-                    'Connected',
-                    style: TextStyle(fontSize: 12, color: Colors.green),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Online',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -297,10 +314,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (item is ChatMessage) {
                       return ChatBubble(message: item);
                     } else if (item is FileTransfer) {
-                      return InkWell(
-                        onTap: () => _handleTransferTap(item),
-                        child: TransferProgressCard(transfer: item),
-                      );
+                      return _buildTransferItem(item);
                     }
                     return const SizedBox.shrink();
                   },
@@ -308,50 +322,320 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              border: Border(
-                top: BorderSide(color: Colors.grey[300]!),
-              ),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.attach_file),
-                  onPressed: _pickFiles,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(
-                      hintText: 'Type a message...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                    ),
-                    onSubmitted: (_) => _sendMessage(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FloatingActionButton(
-                  mini: true,
-                  onPressed: _sendMessage,
-                  child: const Icon(Icons.send),
-                ),
-              ],
-            ),
-          ),
+          _buildMessageInput(),
         ],
       ),
     );
   }
+
+  Widget _buildMessageInput() {
+    return SafeArea(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          boxShadow: [
+            BoxShadow(
+              offset: const Offset(0, -1),
+              blurRadius: 4,
+              color: Theme.of(context).shadowColor.withOpacity(0.05),
+            )
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.attach_file),
+              onPressed: _pickFiles,
+              color: Colors.grey[600],
+              tooltip: 'Attach File',
+            ),
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                decoration: InputDecoration(
+                  hintText: 'Message...',
+                  filled: true,
+                  fillColor: Theme.of(context).brightness == Brightness.light ? Colors.grey[100] : Colors.grey[850],
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                ),
+                onSubmitted: (text) => text.trim().isNotEmpty ? _sendMessage() : null,
+                maxLines: 5,
+                minLines: 1,
+                textCapitalization: TextCapitalization.sentences,
+              ),
+            ),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _messageController,
+              builder: (context, value, child) => IconButton(
+                icon: const Icon(Icons.send),
+                onPressed: value.text.trim().isEmpty ? null : _sendMessage,
+                color: Theme.of(context).primaryColor,
+                tooltip: 'Send Message',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // This is the main dispatcher widget for transfers.
+  // It decides whether to show a large image preview or a generic file card.
+  Widget _buildTransferItem(FileTransfer transfer) {
+    final fileName = transfer.fileName.toLowerCase();
+    final isImage = fileName.endsWith('.png') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.gif');
+
+    // We can show a preview if the file path exists (i.e., it's a sent file or a completed received file)
+    final canShowImagePreview = isImage && transfer.filePath.isNotEmpty && File(transfer.filePath).existsSync();
+
+    if (canShowImagePreview) {
+      return _buildImageTransferItem(transfer);
+    } else {
+      // For non-images or images being received (where we don't have the file yet).
+      return _buildFileCardItem(transfer);
+    }
+  }
+
+  /// Builds a visually rich preview for image transfers.
+  Widget _buildImageTransferItem(FileTransfer transfer) {
+    final file = File(transfer.filePath);
+    final isSending = transfer.direction == TransferDirection.sending;
+
+    return Align(
+      alignment: isSending ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4.0),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.65,
+          maxHeight: 300,
+        ),
+        child: InkWell(
+          onTap: () => _handleTransferTap(transfer),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Image.file(
+                  file,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: Colors.grey[300],
+                      child: const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                    );
+                  },
+                ),
+                // Status badge at the bottom
+                Positioned(
+                  bottom: 5,
+                  right: 8,
+                  child: _buildStatusBadge(transfer),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Builds a new, modern card UI for non-image files.
+  Widget _buildFileCardItem(FileTransfer transfer) {
+    final isSending = transfer.direction == TransferDirection.sending;
+
+    IconData iconData;
+    final fileName = transfer.fileName.toLowerCase();
+    if (fileName.endsWith('.mp4') || fileName.endsWith('.mov')) iconData = Icons.video_file_rounded;
+    else if (fileName.endsWith('.pdf')) iconData = Icons.picture_as_pdf_rounded;
+    else if (fileName.endsWith('.apk')) iconData = Icons.android_rounded;
+    else if (fileName.endsWith('.zip') || fileName.endsWith('.rar')) iconData = Icons.folder_zip_rounded;
+    else if (fileName.endsWith('.mp3') || fileName.endsWith('.wav')) iconData = Icons.audio_file_rounded;
+    else iconData = Icons.insert_drive_file_rounded;
+
+    Widget statusWidget;
+    switch (transfer.status) {
+      case TransferStatus.inProgress:
+        statusWidget = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LinearProgressIndicator(value: transfer.progress > 0 ? transfer.progress : null),
+            const SizedBox(height: 4),
+            Text(
+              '${(transfer.bytesTransferred / (1024 * 1024)).toStringAsFixed(2)} MB of ${transfer.formattedSize}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
+        );
+        break;
+      case TransferStatus.completed:
+        statusWidget = Row(children: [
+          Icon(Icons.check_circle, color: Colors.green[700], size: 18),
+          const SizedBox(width: 6),
+          Text(
+            isSending ? 'Sent' : 'Received',
+            style: TextStyle(fontSize: 14, color: Colors.green[700], fontWeight: FontWeight.w500),
+          ),
+        ]);
+        break;
+      case TransferStatus.failed:
+        statusWidget = Row(children: [
+          const Icon(Icons.error, color: Colors.red, size: 18),
+          const SizedBox(width: 6),
+          const Text('Failed', style: TextStyle(fontSize: 14, color: Colors.red, fontWeight: FontWeight.w500)),
+        ]);
+        break;
+      case TransferStatus.pending:
+        statusWidget = Row(children: [
+          const Icon(Icons.hourglass_empty, color: Colors.orange, size: 18),
+          const SizedBox(width: 6),
+          const Text('Waiting...', style: TextStyle(fontSize: 14, color: Colors.orange, fontWeight: FontWeight.w500)),
+        ]);
+        break;
+      default:
+        statusWidget = const SizedBox.shrink();
+    }
+
+    return Align(
+      alignment: isSending ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4.0),
+        width: MediaQuery.of(context).size.width * 0.75,
+        child: InkWell(
+          onTap: () => _handleTransferTap(transfer),
+          borderRadius: BorderRadius.circular(12),
+          child: Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 1.5,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                        child: Icon(iconData, color: Theme.of(context).primaryColor, size: 28),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              transfer.fileName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              transfer.formattedSize,
+                              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  statusWidget,
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A small badge showing status, primarily for image previews.
+  Widget _buildStatusBadge(FileTransfer transfer) {
+    final isSending = transfer.direction == TransferDirection.sending;
+    String statusText;
+    IconData? statusIcon;
+
+    switch (transfer.status) {
+      case TransferStatus.completed:
+        statusText = isSending ? 'Sent' : 'Received';
+        statusIcon = Icons.check_circle;
+        break;
+      case TransferStatus.inProgress:
+        statusText = '${(transfer.progress * 100).toStringAsFixed(0)}%';
+        statusIcon = null; // Progress is shown by the main indicator
+        break;
+      case TransferStatus.pending:
+        statusText = 'Waiting';
+        statusIcon = Icons.hourglass_empty;
+        break;
+      default:
+        return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.6),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(statusText, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w500)),
+          if (statusIcon != null) ...[
+            const SizedBox(width: 4),
+            Icon(statusIcon, color: Colors.white, size: 14),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /*
+    final fileName = transfer.fileName.toLowerCase();
+    final isImage = fileName.endsWith('.png') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.gif');
+
+    if (isImage && (transfer.direction == TransferDirection.sending || transfer.status == TransferStatus.completed)) {
+      final file = File(transfer.filePath);
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8.0),
+        child: Image.file(
+          file,
+          width: 50,
+          height: 50,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const Icon(Icons.image, size: 30);
+          },
+        ),
+      );
+    }
+
+    IconData iconData;
+    if (isImage) iconData = Icons.image_outlined;
+    else if (fileName.endsWith('.mp4') || fileName.endsWith('.mov')) iconData = Icons.video_file_outlined;
+    else if (fileName.endsWith('.pdf')) iconData = Icons.picture_as_pdf_outlined;
+    else if (fileName.endsWith('.apk')) iconData = Icons.android;
+    else iconData = Icons.insert_drive_file_outlined;
+
+    return Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(
+        color: Theme.of(context).primaryColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: Icon(iconData, color: Theme.of(context).primaryColor),
+    );
+  */
 
   Widget _buildEmptyChatView() {
     return Center(
