@@ -112,6 +112,38 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _onAttemptPop() async {
+    final shouldPop = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false, // User must choose an action
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Disconnect'),
+        content: Text('Are you sure you want to disconnect from ${widget.device.name}?'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop(false); // Stay on screen
+            },
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () {
+              Navigator.of(dialogContext).pop(true); // Allow pop
+            },
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldPop ?? false && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
   void _handleIncomingMessage(Map<String, dynamic> data) {
     final message = ChatMessage(
       id: data['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
@@ -241,89 +273,96 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 20,
-              child: Text(widget.device.name[0].toUpperCase()),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.device.name,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Online',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                ],
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (bool didPop) {
+        if (didPop) return;
+        _onAttemptPop();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                child: Text(widget.device.name[0].toUpperCase()),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.device.name,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Online',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.link_off),
+              tooltip: 'Disconnect',
+              onPressed: _onAttemptPop,
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.link_off),
-            tooltip: 'Disconnect',
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Consumer2<ChatProvider, TransferProvider>(
-              builder: (context, chatProvider, transferProvider, child) {
-                final messages = chatProvider.getConversation(widget.device.id);
-                final transfers = transferProvider.getTransfersForDevice(widget.device.id);
+        body: Column(
+          children: [
+            Expanded(
+              child: Consumer2<ChatProvider, TransferProvider>(
+                builder: (context, chatProvider, transferProvider, child) {
+                  final messages = chatProvider.getConversation(widget.device.id);
+                  final transfers = transferProvider.getTransfersForDevice(widget.device.id);
 
-                // Combine and sort messages and transfers by time
-                final List<dynamic> conversationItems = [...messages, ...transfers];
-                conversationItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-                
-                if (conversationItems.isEmpty) {
-                  return _buildEmptyChatView();
-                }
+                  // Combine and sort messages and transfers by time
+                  final List<dynamic> conversationItems = [...messages, ...transfers];
+                  conversationItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+                  
+                  if (conversationItems.isEmpty) {
+                    return _buildEmptyChatView();
+                  }
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(16),
-                  itemCount: conversationItems.length,
-                  itemBuilder: (context, index) {
-                    final item = conversationItems[index];
-                    if (item is ChatMessage) {
-                      return ChatBubble(message: item);
-                    } else if (item is FileTransfer) {
-                      return _buildTransferItem(item);
-                    }
-                    return const SizedBox.shrink();
-                  },
-                );
-              },
+                  return ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: conversationItems.length,
+                    itemBuilder: (context, index) {
+                      final item = conversationItems[index];
+                      if (item is ChatMessage) {
+                        return ChatBubble(message: item);
+                      } else if (item is FileTransfer) {
+                        return _buildTransferItem(item);
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-          _buildMessageInput(),
-        ],
+            _buildMessageInput(),
+          ],
+        ),
       ),
     );
   }

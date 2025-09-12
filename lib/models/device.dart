@@ -22,6 +22,26 @@ class Device {
     this.isConnected = false,
   });
 
+  Device copyWith({
+    String? id,
+    String? name,
+    String? ipAddress,
+    int? port,
+    String? platform,
+    DateTime? lastSeen,
+    bool? isConnected,
+  }) {
+    return Device(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      ipAddress: ipAddress ?? this.ipAddress,
+      port: port ?? this.port,
+      platform: platform ?? this.platform,
+      lastSeen: lastSeen ?? this.lastSeen,
+      isConnected: isConnected ?? this.isConnected,
+    );
+  }
+
   factory Device.fromJson(Map<String, dynamic> json) {
     return Device(
       id: json['deviceId'] as String,
