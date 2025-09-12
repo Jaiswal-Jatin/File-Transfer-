@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/network_service.dart';
+import '../services/notification_service.dart';
 import '../models/device.dart';
 import '../widgets/device_card.dart';
 import 'chat_screen.dart'; // For navigation after connection
@@ -60,6 +61,10 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen> {
         setState(() => _connectingDevice = null);
 
         if (event['accepted'] == true) {
+          // Show connected notification
+          context
+              .read<NotificationService>()
+              .showDeviceConnectedNotification(respondingDevice);
           // Navigate to the chat/transfer screen
           Navigator.pushReplacement(
             context,

@@ -14,6 +14,7 @@ import '../models/file_transfer.dart';
 import '../providers/chat_provider.dart';
 import '../providers/transfer_provider.dart';
 import '../services/network_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/chat_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -59,7 +60,11 @@ class _ChatScreenState extends State<ChatScreen> {
   
       switch (type) {
         case NetworkService.msgTypeChat:
-          if (fromDeviceId == widget.device.id) _handleIncomingMessage(event);
+          if (fromDeviceId == widget.device.id) {
+            _handleIncomingMessage(event);
+            context.read<NotificationService>().showMessageNotification(
+                widget.device.name, event['message'], widget.device);
+          }
           break;
         case NetworkService.msgTypeFileInfo:
           if (fromDeviceId == widget.device.id) _handleFileRequest(event);
@@ -85,6 +90,9 @@ class _ChatScreenState extends State<ChatScreen> {
               transferId,
               status: TransferStatus.completed,
             );
+            context.read<NotificationService>().showFileSentNotification(
+              transfer.fileName, widget.device
+            );
           } else if (fromDeviceId == null && transfer.direction == TransferDirection.receiving) {
             // I am the RECEIVER, and this is a local event from my NetworkService.
             final filePath = event['filePath'] as String;
@@ -92,6 +100,9 @@ class _ChatScreenState extends State<ChatScreen> {
               transferId,
               status: TransferStatus.completed,
               filePath: filePath,
+            );
+            context.read<NotificationService>().showFileReceivedNotification(
+              transfer.fileName, widget.device
             );
             // Send confirmation back to the sender.
             context.read<NetworkService>().sendMessage(widget.device, {
@@ -314,16 +325,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: _isPopping,
-      onPopInvoked: (bool didPop) {
-        if (didPop) return;
-        _onAttemptPop();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Row(
-            children: [
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
               CircleAvatar(
                 radius: 20,
                 child: Text(widget.device.name[0].toUpperCase()),
@@ -404,7 +409,6 @@ class _ChatScreenState extends State<ChatScreen> {
             _buildMessageInput(),
           ],
         ),
-      ),
     );
   }
 

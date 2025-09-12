@@ -53,6 +53,17 @@ class Device {
     );
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'deviceId': id,
+      'deviceName': name,
+      'ipAddress': ipAddress,
+      'port': port,
+      'platform': platform,
+      // lastSeen and isConnected are not needed for re-creating the connection object for notifications.
+    };
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
