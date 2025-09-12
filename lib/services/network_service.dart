@@ -1,4 +1,4 @@
-// ignore_for_file: prefer_expression_function_bodies
+// ignore_for_file: prefer_expression_function_bodies, cascade_invocations
 
 import 'dart:async';
 import 'dart:convert';
@@ -125,121 +125,136 @@ class NetworkService {
   }
 
   void _handleTcpConnection(Socket client) {
-      print('New TCP connection from: ${client.remoteAddress}');
+    print('New TCP connection from: ${client.remoteAddress}');
+    StreamSubscription<List<int>>? subscription;
+    List<int> buffer = [];
+    bool headerFound = false;
 
-      List<int> buffer = [];
-      bool isHeaderRead = false;
+    subscription = client.listen(
+        (data) {
+            // Pause subscription to process data and avoid race conditions.
+            subscription!.pause();
 
-      // File transfer specific state
-      IOSink? fileSink;
-      File? file;
-      int totalBytes = 0;
-      int receivedBytes = 0;
-      String transferId = '';
-      String fileName = '';
+            // If header not found yet, buffer data and search for it.
+            if (!headerFound) {
+                buffer.addAll(data);
+                int newlineIndex = buffer.indexOf(10); // '\n'
 
-      client.listen(
-      (data) {
-        () async { // Use an async IIFE to use await inside the listener
-          if (!isHeaderRead) {
-            buffer.addAll(data);
-            int newlineIndex = buffer.indexOf(10); // ASCII for '\n'
+                if (newlineIndex != -1) {
+                    headerFound = true;
+                    final headerBytes = buffer.sublist(0, newlineIndex);
+                    final firstChunk = buffer.sublist(newlineIndex + 1);
+                    
+                    buffer.clear(); // Free memory
 
-            if (newlineIndex != -1) {
-              isHeaderRead = true;
-              final headerData = buffer.sublist(0, newlineIndex);
-              final remainingData = buffer.sublist(newlineIndex + 1);
-
-              try {
-                final headerString = utf8.decode(headerData);
-                final jsonData = jsonDecode(headerString) as Map<String, dynamic>;
-                final type = jsonData['type'] as String?;
-
-                if (type == msgTypeFileData) {
-                  // It's a file. Set up for receiving.
-                  transferId = jsonData['transferId'] as String;
-                  fileName = jsonData['fileName'] as String;
-                  totalBytes = jsonData['fileSize'] as int;
-
-                  print('Receiving file: $fileName ($totalBytes bytes)');
-
-                  final fileService = FileService();
-                  final downloadsDir = await fileService.getAppSaveDirectory();
-                  file = await fileService.getUniqueFile(downloadsDir, fileName);
-                  fileSink = file!.openWrite();
-
-                  // Write the first chunk of file data we already have
-                  if (remainingData.isNotEmpty) {
-                    fileSink!.add(remainingData);
-                    receivedBytes += remainingData.length;
-                    _eventController.add({'type': msgTypeFileProgress, 'transferId': transferId, 'bytesTransferred': receivedBytes, 'totalBytes': totalBytes});
-                  }
-
-                  // If the entire file was in the first packet
-                  if (receivedBytes >= totalBytes && totalBytes >= 0) {
-                    await fileSink?.close();
-                    fileSink = null;
-                    print('File received and saved: ${file!.path}');
-                    _eventController.add({'type': msgTypeFileComplete, 'transferId': transferId, 'filePath': file!.path});
-                    client.close();
-                  }
+                    // Process header and start file reception asynchronously
+                    _processHeaderAndReceiveFile(client, subscription, headerBytes, firstChunk);
                 } else {
-                  // It's a regular JSON message, not a file
-                  _eventController.add(jsonData);
-                  client.close(); // Close after processing one-shot message
+                    // Header not complete, resume to get more data.
+                    subscription.resume();
                 }
-              } catch (e) {
-                print('Error processing incoming TCP data: $e');
-                await fileSink?.close();
-                if (file != null && await file!.exists()) await file!.delete();
-                client.close();
-              }
+            } else {
+                // This case should not be reached if logic is correct,
+                // as the listener is replaced inside _processHeaderAndReceiveFile.
+                // But as a safeguard, we resume.
+                subscription.resume();
             }
-          } else {
-            // Header has been read, this is subsequent file data
-            if (fileSink != null) {
-              fileSink!.add(data);
-              receivedBytes += data.length;
-              _eventController.add({'type': msgTypeFileProgress, 'transferId': transferId, 'bytesTransferred': receivedBytes, 'totalBytes': totalBytes});
-
-              // Check if transfer is complete
-              if (receivedBytes >= totalBytes) {
-                await fileSink?.close();
-                fileSink = null; // Prevent further writes
-                print('File received and saved: ${file!.path}');
-                _eventController.add({'type': msgTypeFileComplete, 'transferId': transferId, 'filePath': file!.path});
-                client.close();
-              }
-            }
-          }
-        }();
-      },
-      onDone: () async {
-        if (fileSink != null) {
-          await fileSink?.close();
-          fileSink = null;
-          if (receivedBytes < totalBytes) {
-            print('File transfer incomplete. Deleting partial file: $fileName');
-            _eventController.add({'type': msgTypeFileError, 'transferId': transferId, 'error': 'Connection closed before transfer was complete.'});
-            if (file != null && await file!.exists()) await file!.delete();
-          }
-        }
-        client.destroy();
-      },
-      onError: (error) async {
-        print('TCP connection error: $error');
-        if (fileSink != null) {
-          await fileSink?.close();
-          fileSink = null;
-          _eventController.add({'type': msgTypeFileError, 'transferId': transferId, 'error': error.toString()});
-          if (file != null && await file!.exists()) await file!.delete();
-        }
-        client.destroy();
-      },
-      cancelOnError: true,
+        },
+        onError: (error) {
+            print('TCP connection error: $error');
+            client.destroy();
+        },
+        onDone: () {
+            // This is only called if the connection closes before a header is found.
+            print('Connection closed before header was received.');
+            client.destroy();
+        },
+        cancelOnError: true
     );
   }
 
+  // Helper method to keep the listener clean and handle async setup correctly.
+  Future<void> _processHeaderAndReceiveFile(Socket client, StreamSubscription<List<int>> subscription, List<int> headerBytes, List<int> firstChunk) async {
+    File? file;
+    IOSink? fileSink;
+
+    try {
+        final headerString = utf8.decode(headerBytes);
+        final jsonData = jsonDecode(headerString) as Map<String, dynamic>;
+        final type = jsonData['type'] as String?;
+
+        if (type == msgTypeFileData) {
+            final transferId = jsonData['transferId'] as String;
+            final fileName = jsonData['fileName'] as String;
+            final totalBytes = jsonData['fileSize'] as int;
+
+            print('Receiving file: $fileName ($totalBytes bytes)');
+
+            final fileService = FileService();
+            final downloadsDir = await fileService.getAppSaveDirectory();
+            file = await fileService.getUniqueFile(downloadsDir, fileName);
+            fileSink = file.openWrite();
+
+            int receivedBytes = 0;
+
+            // Write the first chunk we already have
+            if (firstChunk.isNotEmpty) {
+                fileSink.add(firstChunk);
+                receivedBytes += firstChunk.length;
+                _eventController.add({'type': msgTypeFileProgress, 'transferId': transferId, 'bytesTransferred': receivedBytes, 'totalBytes': totalBytes});
+            }
+
+            // Now that setup is done, replace the listener logic to just pipe data to the file.
+            subscription.onData((data) {
+                // Use a local variable to handle null-safety within the closure.
+                final sink = fileSink;
+                if (sink == null) return; // Safeguard against late data after an error.
+                
+                sink.add(data);
+                receivedBytes += data.length;
+                _eventController.add({'type': msgTypeFileProgress, 'transferId': transferId, 'bytesTransferred': receivedBytes, 'totalBytes': totalBytes});
+            });
+
+            subscription.onDone(() async {
+                await fileSink?.close();
+                fileSink = null; // Mark as closed
+                if (receivedBytes >= totalBytes) {
+                    print('File received and saved: ${file!.path}');
+                    _eventController.add({'type': msgTypeFileComplete, 'transferId': transferId, 'filePath': file!.path});
+                } else {
+                    print('File transfer incomplete. Deleting partial file: $fileName');
+                    _eventController.add({'type': msgTypeFileError, 'transferId': transferId, 'error': 'Connection closed prematurely.'});
+                    if (file != null && await file.exists()) await file.delete();
+                }
+                client.destroy();
+            });
+
+            subscription.onError((error) async {
+                print('Error during file transfer: $error');
+                await fileSink?.close();
+                fileSink = null;
+                _eventController.add({'type': msgTypeFileError, 'transferId': transferId, 'error': error.toString()});
+                if (file != null && await file.exists()) await file.delete();
+                client.destroy();
+            });
+            
+            // Resume the stream to let the new onData handler process the rest.
+            subscription.resume();
+
+        } else {
+            // It's a regular JSON message, not a file.
+            _eventController.add(jsonData);
+            subscription.cancel();
+            client.close();
+        }
+    } catch (e) {
+        print('Error processing header or setting up file receive: $e');
+        await fileSink?.close();
+        if (file != null && await file.exists()) await file.delete();
+        subscription.cancel();
+        client.destroy();
+    }
+  }
 
   void _handleUdpPacket(RawSocketEvent event) {
     if (event == RawSocketEvent.read) {
