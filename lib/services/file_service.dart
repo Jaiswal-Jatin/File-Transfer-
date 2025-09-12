@@ -34,7 +34,35 @@ class FileService {
   Future<Directory> getAppSaveDirectory() async {
     Directory? baseDirectory;
     if (Platform.isAndroid) {
+      // On Android, we want the public "Downloads" directory. This requires
+      // storage permissions to be granted by the user at runtime.
       baseDirectory = await getDownloadsDirectory();
+
+      // On some Android versions or without permissions, getDownloadsDirectory()
+      // might return a private, app-specific path (e.g., /storage/emulated/0/Android/data/...).
+      // We check for this and attempt a workaround to find the true public directory.
+      if (baseDirectory == null || baseDirectory.path.contains('/Android/data')) {
+        print("getDownloadsDirectory() returned a private path or null. Trying to find public path manually.");
+        try {
+          // This workaround finds the root of the external storage.
+          final Directory? externalDir = await getExternalStorageDirectory();
+          if (externalDir != null) {
+            final String rootPath = externalDir.path.split('/Android/data').first;
+            final publicDownloadsPath = '$rootPath/Download';
+            final publicDownloadsDir = Directory(publicDownloadsPath);
+            
+            // Check if we have access and the directory exists. Create it if it doesn't.
+            if (await publicDownloadsDir.exists() || (await publicDownloadsDir.create(recursive: true)).existsSync()) {
+               baseDirectory = publicDownloadsDir;
+               print("Successfully found and using public downloads path: ${baseDirectory.path}");
+            } else {
+               print("Failed to create or access public downloads directory. Using original path.");
+            }
+          }
+        } catch (e) {
+          print("Error finding public downloads directory manually: $e. Using path_provider's result.");
+        }
+      }
     } else if (Platform.isIOS) {
       baseDirectory = await getApplicationDocumentsDirectory();
     } else {
@@ -42,9 +70,9 @@ class FileService {
       baseDirectory = await getDownloadsDirectory();
     }
 
-    // Fallback to the application's documents directory if the downloads directory isn't available.
+    // Final fallback to the application's documents directory if no other directory is found.
     baseDirectory ??= await getApplicationDocumentsDirectory();
-    final p2pShareDirectory = Directory('${baseDirectory.path}/File Transfer P2P');
+    final p2pShareDirectory = Directory('${baseDirectory.path}/P2P File Transfer');
     if (!await p2pShareDirectory.exists()) {
       await p2pShareDirectory.create(recursive: true);
     }
@@ -139,8 +167,18 @@ class FileService {
       final startTime = DateTime.now();
       
       await for (final data in socket) {
-        sink.add(data);
-        totalReceived += data.length;
+        // Determine how much of the chunk to write to the file
+        final bytesToWrite = (totalReceived + data.length > fileSize)
+            ? fileSize - totalReceived
+            : data.length;
+
+        if (bytesToWrite > 0) {
+          sink.add(data.sublist(0, bytesToWrite));
+          totalReceived += bytesToWrite;
+        }
+        // Note: If data.length > bytesToWrite, the rest of the data in this
+        // chunk is discarded. This can be an issue if the socket is reused for
+        // other messages immediately after the file data.
         
         final elapsed = DateTime.now().difference(startTime);
         final speed = elapsed.inMilliseconds > 0 
