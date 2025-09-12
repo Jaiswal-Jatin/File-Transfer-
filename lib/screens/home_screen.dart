@@ -90,6 +90,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _handleRefresh() async {
+    // This will clear the device list and send a new discovery broadcast.
+    await context.read<NetworkService>().refreshDiscovery();
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('P2P File Share'), actions: [
@@ -100,67 +105,72 @@ class _HomeScreenState extends State<HomeScreen> {
         IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen())))
+                MaterialPageRoute(builder: (_) => const SettingsScreen()))),
       ]),
-      body: Consumer<AppProvider>(builder: (context, appProvider, child) {
-        if (!appProvider.isInitialized) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        return Padding(
-            padding: const EdgeInsets.all(16),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Welcome, ${appProvider.deviceName}!',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              Text('Share files instantly with nearby devices',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyLarge
-                      ?.copyWith(color: Colors.grey[600])),
-              const SizedBox(height: 32),
-              FeatureCard(
-                  icon: Icons.cast_connected,
-                  title: 'Connect to Device',
-                  subtitle: 'Find and connect to share files & messages',
-                  color: Theme.of(context).primaryColor,
-                  onTap: _navigateToDiscovery),
-              const SizedBox(height: 24),
-              Text('Connected Devices',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Expanded(
-                  child: StreamBuilder<List<Device>>(
-                      stream: context.watch<NetworkService>().deviceListStream,
-                      initialData:
-                          context.read<NetworkService>().discoveredDevices,
-                      builder: (context, snapshot) {
-                        final chatProvider = context.watch<ChatProvider>();
-                        final allDiscoveredDevices = snapshot.data ?? [];
-                        final connectedDeviceIds =
-                            chatProvider.conversations.keys;
-                        final connectedDevices = allDiscoveredDevices
-                            .where((d) => connectedDeviceIds.contains(d.id))
-                            .toList();
-                        if (connectedDevices.isEmpty) {
-                          return const Center(
-                              child: Text('No devices with active chats.'));
-                        }
-                        return ListView.builder(
-                            itemCount: connectedDevices.length,
-                            itemBuilder: (context, index) {
-                              final device = connectedDevices[index];
-                              return DeviceCard(
-                                  device: device.copyWith(isConnected: true),
-                                  onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              ChatScreen(device: device))));
-                            });
-                      }))
-            ]));
-      }));
+      body: RefreshIndicator(
+        onRefresh: _handleRefresh,
+        child: Consumer<AppProvider>(builder: (context, appProvider, child) {
+          if (!appProvider.isInitialized) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          // Use a ListView to ensure the RefreshIndicator works even when content is short.
+          return ListView(padding: const EdgeInsets.all(16), children: [
+            Text('Welcome, ${appProvider.deviceName}!',
+                style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text('Share files instantly with nearby devices',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyLarge
+                    ?.copyWith(color: Colors.grey[600])),
+            const SizedBox(height: 32),
+            Center(
+              child: FractionallySizedBox(
+                widthFactor: 0.95,
+                child: FeatureCard(
+                    icon: Icons.cast_connected,
+                    title: 'Connect to Device',
+                    subtitle: 'Find and connect to share files & messages',
+                    color: Theme.of(context).primaryColor,
+                    onTap: _navigateToDiscovery),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text('Connected Devices',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            StreamBuilder<List<Device>>(
+                stream: context.watch<NetworkService>().deviceListStream,
+                initialData: context.read<NetworkService>().discoveredDevices,
+                builder: (context, snapshot) {
+                  final chatProvider = context.watch<ChatProvider>();
+                  final allDiscoveredDevices = snapshot.data ?? [];
+                  final connectedDeviceIds = chatProvider.conversations.keys;
+                  final connectedDevices = allDiscoveredDevices
+                      .where((d) => connectedDeviceIds.contains(d.id))
+                      .toList();
+                  if (connectedDevices.isEmpty) {
+                    return const Center(
+                        heightFactor: 3,
+                        child: Text('No devices with active chats.'));
+                  }
+                  // We can't use an Expanded ListView inside another ListView.
+                  // So we use a Column of the widgets directly.
+                  return Column(
+                    children: connectedDevices
+                        .map((device) => DeviceCard(
+                            device: device.copyWith(isConnected: true),
+                            onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        ChatScreen(device: device)))))
+                        .toList(),
+                  );
+                }),
+          ]);
+        }),
+      ));
   void _navigateToDiscovery() {
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => const DeviceDiscoveryScreen()));

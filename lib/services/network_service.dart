@@ -65,6 +65,17 @@ class NetworkService {
     await _startUdpDiscovery(); // For discovering other devices
   }
 
+  Future<void> refreshDiscovery() async {
+    print('Refreshing discovery...');
+    // Clear the list to give immediate UI feedback.
+    _discoveredDevices.clear();
+    _deviceListController.add(discoveredDevices);
+
+    // Send a new broadcast packet to trigger responses from other devices.
+    _broadcastPresence();
+    // A small delay can help in capturing quick responses, but not strictly necessary.
+  }
+
   Future<void> stopDiscovery() async {
     _broadcastTimer?.cancel();
     _cleanupTimer?.cancel();
