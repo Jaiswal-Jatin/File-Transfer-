@@ -31,24 +31,20 @@ class FileService {
     }
   }
 
-  Future<Directory> getDownloadsDirectory() async {
+  Future<Directory> getAppSaveDirectory() async {
     Directory? baseDirectory;
     if (Platform.isAndroid) {
-      // On Android, getDownloadsDirectory() is available for API 29+.
-      // It's better than a hardcoded path but might require storage permissions.
-      // For older versions, it returns null.
       baseDirectory = await getDownloadsDirectory();
     } else if (Platform.isIOS) {
-      // On iOS, files are typically saved in the app's documents directory.
       baseDirectory = await getApplicationDocumentsDirectory();
     } else {
-      // For desktop platforms (Windows, Linux, macOS), getDownloadsDirectory() is preferred.
+      // For desktop platforms (Windows, Linux, macOS).
       baseDirectory = await getDownloadsDirectory();
     }
 
     // Fallback to the application's documents directory if the downloads directory isn't available.
     baseDirectory ??= await getApplicationDocumentsDirectory();
-    final p2pShareDirectory = Directory('${baseDirectory.path}/P2P Share');
+    final p2pShareDirectory = Directory('${baseDirectory.path}/File Transfer P2P');
     if (!await p2pShareDirectory.exists()) {
       await p2pShareDirectory.create(recursive: true);
     }
@@ -135,8 +131,8 @@ class FileService {
     IOSink? sink;
     File? file;
     try {
-      final downloadsDir = await getDownloadsDirectory();
-      file = await _getUniqueFile(downloadsDir, fileName);
+      final downloadsDir = await getAppSaveDirectory();
+      file = await getUniqueFile(downloadsDir, fileName);
       sink = file.openWrite();
       
       int totalReceived = 0;
@@ -192,7 +188,7 @@ class FileService {
     } 
   }
 
-  Future<File> _getUniqueFile(Directory dir, String fileName) async {
+  Future<File> getUniqueFile(Directory dir, String fileName) async {
     var file = File('${dir.path}/$fileName');
     if (!await file.exists()) {
       return file;

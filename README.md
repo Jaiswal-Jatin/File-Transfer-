@@ -60,11 +60,20 @@ A cross-platform peer-to-peer file sharing application built with Flutter. Share
    \`\`\`
 
    #### macOS
-   - Enable network permissions in `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`:
+   - Enable network and file access permissions in `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`. If your app is sandboxed, these are required:
    \`\`\`xml
+   <!-- For networking -->
    <key>com.apple.security.network.client</key>
    <true/>
    <key>com.apple.security.network.server</key>
+   <true/>
+
+   <!-- For picking files -->
+   <key>com.apple.security.files.user-selected.read-only</key>
+   <true/>
+
+   <!-- For saving files to the Downloads folder -->
+   <key>com.apple.security.files.downloads.read-write</key>
    <true/>
    \`\`\`
 

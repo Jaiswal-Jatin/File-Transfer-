@@ -109,12 +109,20 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<Device>(
-              stream: _networkService.deviceStream,
+            child: StreamBuilder<List<Device>>(
+              stream: _networkService.deviceListStream,
+              initialData: _networkService.discoveredDevices,
               builder: (context, snapshot) {
-                final devices = _networkService.discoveredDevices;
-                
+                if (snapshot.hasError) {
+                  return Center(child: Text('Error: ${snapshot.error}'));
+                }
+
+                final devices = snapshot.data ?? [];
+
                 if (devices.isEmpty) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -125,25 +133,19 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen> {
                           color: Colors.grey[400],
                         ),
                         const SizedBox(height: 16),
-                        Text(
+                        const Text(
                           'No devices found',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: Colors.grey[600],
-                          ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
+                        const Text(
                           'Make sure other devices are on the same network',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.grey[500],
-                          ),
                           textAlign: TextAlign.center,
                         ),
                       ],
                     ),
                   );
                 }
-
+ 
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: devices.length,
