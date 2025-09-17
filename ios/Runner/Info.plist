@@ -26,12 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>This app uses the local network to discover and connect to nearby devices for file sharing.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_p2pshare._tcp</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app uses the local network to discover and connect to nearby devices for file sharing.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs access to your photo library to allow you to share photos.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

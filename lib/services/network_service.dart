@@ -101,7 +101,7 @@ class NetworkService {
   Future<void> _startUdpDiscovery() async {
     try {
       // 1. Create the UDP socket to listen for broadcasts
-      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
+      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort, reuseAddress: true);
       _udpSocket!.broadcastEnabled = true;
       _udpSocket!.listen(_handleUdpPacket);
       print('UDP Discovery listener started on port $_discoveryPort');
@@ -116,8 +116,8 @@ class NetworkService {
     }
   }
 
-  void _broadcastPresence() {
-    if (_udpSocket == null) return;
+  void _broadcastPresence() async {
+    if (_udpSocket == null || _localIpAddress == null) return;
 
     final message = {
       'type': msgTypeDiscovery,
@@ -127,10 +127,17 @@ class NetworkService {
       'platform': Platform.operatingSystem,
     };
     final data = utf8.encode(jsonEncode(message));
-    
+
+    // On iOS, sending to the general broadcast address (255.255.255.255) can fail
+    // with a "No route to host" error if the app lacks local network permissions,
+    // or on certain network configurations. Using the subnet-specific broadcast
+    // address is often more reliable.
+    final ipParts = _localIpAddress!.split('.');
+    final broadcastAddress = '${ipParts[0]}.${ipParts[1]}.${ipParts[2]}.255';
+
     // Broadcast to the local network
     try {
-      _udpSocket!.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
+      _udpSocket!.send(data, InternetAddress(broadcastAddress), _discoveryPort);
     } catch (e) {
       print('Error sending broadcast: $e');
     }
@@ -442,13 +449,41 @@ class NetworkService {
   }
 
   Future<String?> _getLocalIpAddress() async {
+    // Prioritize Wi-Fi IP as it's most likely the correct one for local network.
     try {
-      final info = NetworkInfo();
-      return await info.getWifiIP();
+      final wifiIP = await NetworkInfo().getWifiIP();
+      // Avoid link-local addresses which are not useful for routing.
+      if (wifiIP != null && !wifiIP.startsWith('169.254')) {
+        return wifiIP;
+      }
     } catch (e) {
-      print('Error getting local IP: $e');
-      return null;
+      print('Could not get Wi-Fi IP: $e');
     }
+
+    // Fallback to iterating all network interfaces if Wi-Fi IP is not available.
+    try {
+      for (final interface in await NetworkInterface.list()) {
+        // Look for a non-loopback, IPv4 address on a private network.
+        for (final addr in interface.addresses) {
+          if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+            // Check if it's a private IP range, common for local networks.
+            if (addr.address.startsWith('192.168.') ||
+                addr.address.startsWith('10.') ||
+                (addr.address.startsWith('172.') &&
+                    (int.parse(addr.address.split('.')[1]) >= 16 &&
+                        int.parse(addr.address.split('.')[1]) <= 31))) {
+              print('Found fallback IP: ${addr.address} on interface ${interface.name}');
+              return addr.address;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Error iterating network interfaces: $e');
+    }
+    
+    print('Could not find a suitable local IP address.');
+    return null;
   }
 
   String _generateDeviceId() {
